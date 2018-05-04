@@ -1,0 +1,506 @@
+---
+title: 'Final'
+author:
+  affiliation: 'Case Western Reserve University'
+  email: 'rachel.sabol@case.edu'
+  name: 'Rachel Sabol'
+date: '`r format(Sys.Date())`'
+output:
+  html_document:
+    fig_caption: yes
+    highlight: tango
+    toc: yes
+    toc_float: yes
+    code_folding: show
+  html_notebook:
+    fig_caption: yes
+    highlight: tango
+    number_sections: yes
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+suppressPackageStartupMessages(library(knitr))
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+knitr::opts_chunk$set(warning = FALSE
+                     , message     = FALSE
+                     , warning     = FALSE
+                     , echo        = FALSE
+                     , cache       = FALSE
+                     , strip.white = TRUE)
+ 
+```
+
+```{r}
+#load in libraries
+library(randomForest)
+library(caret)
+library(gbm)
+library(pROC)
+library(DiagrammeR)
+library(e1071)
+library(xgboost)
+library(ggplot2)
+library(colorspace)
+```
+
+```{r}
+#load in data and format for usage
+
+training=read.table(file="C:/Users/Rachel Sabol/Documents/Graduate Coursework/471 FINAL/ticdata2000.txt", header=TRUE)
+testing=read.table(file="C:/Users/Rachel Sabol/Documents/Graduate Coursework/471 FINAL/ticeval2000.txt", header=TRUE)
+varnames=read.table(file="C:/Users/Rachel Sabol/Documents/Graduate Coursework/471 FINAL/varnames.txt")
+testing_targets=read.table(file="C:/Users/Rachel Sabol/Documents/Graduate Coursework/471 FINAL/tictgts2000.txt") #binary outcome
+
+
+colnames(training)=varnames[,1]
+colnames(testing)=varnames[-86,1]
+testing_targets=cbind(testing[,1],testing_targets[-4000,])
+colnames(testing_targets)=c("ID", "CARAVAN")
+testing_targets=as.data.frame(testing_targets)
+
+training$CARAVAN <- ifelse(training$CARAVAN==1,'yes','nope')
+training$CARAVAN <- as.factor(training$CARAVAN)
+testing_targets$CARAVAN <- ifelse(testing_targets$CARAVAN==1,'yes','nope')
+testing_targets$CARAVAN <- as.factor(testing_targets$CARAVAN)
+
+
+
+training_matrix=read.table(file="C:/Users/Rachel Sabol/Documents/Graduate Coursework/471 FINAL/ticdata2000.txt", header=TRUE)
+training_matrix=data.matrix(training_matrix)
+testing_targets_01=read.table(file="C:/Users/Rachel Sabol/Documents/Graduate Coursework/471 FINAL/tictgts2000.txt") #binary outcome
+testing_targets_01=cbind(testing[,1],testing_targets_01[-4000,])
+colnames(testing_targets_01)=c("ID", "CARAVAN")
+testing_targets_01=as.data.frame(testing_targets_01)
+testing_matrix=data.matrix(testing)
+training_matrix=apply(training_matrix,2,as.numeric)
+testing_matrix=apply(testing_matrix,2,as.numeric)
+
+
+```
+
+
+#SUPERVISED LEARNING
+##Random Forests
+
+###Model 1
+
+The following plots and results are generated from a basic random forest model, using all predictors on the training data. 
+
+```{r}
+#model 1
+rf_model=randomForest(CARAVAN~.,data=training)
+rf_model
+names(rf_model)
+print("mean(rf_model$oob.times/rf_model$ntree"); mean(rf_model$oob.times/rf_model$ntree); exp(-1)
+plot(rf_model)
+importance(rf_model); varImpPlot(rf_model)
+```
+
+Results from the predictions on the testing data are below.
+
+```{r}
+rf_predict=predict(rf_model, newdata=testing)
+rf_predict[rf_predict<.5]=0
+rf_predict[rf_predict>.5]=1
+table(testing_targets[,2],rf_predict)
+
+err=(236+36)/(3999)
+
+print(paste("test-error=", err))
+```
+
+In comparison with the other models, this particular version of the random forest actually classifies variables as "yes." A general problem with many of the other models is that, although they have better testing error rates, they never classify testing data as a "yes" outcome. In other words, the false positive rate is nonexistant, but the falst negative result is relatively high. 
+
+###Model 2
+
+This model uses the RFcaret package and a repeated cv to adjust the random forest model. 
+
+```{r}
+#model 2
+cvCtrl = trainControl(method="repeatedcv", number=5, repeats=4, classProbs=TRUE)
+fitRFcaret = train(x=training[,1:85], y=training$CARAVAN, trControl=cvCtrl,
+                   tuneGrid=data.frame(mtry=1:13),
+                   method="rf", ntree=500) 
+#saveRDS(fitRFcaret, file="C:/Users/Rachel Sabol/Documents/Graduate Coursework/471 FINAL/fitRFcaret.rds")
+
+#path="C:/Users/Rachel Sabol/Documents/Graduate Coursework/471 FINAL/fitRFcaret.rds"
+#fitRFcaret=readRDS(file=path)
+
+fitRFcaret
+plot(fitRFcaret)
+names(fitRFcaret)
+fitRFcaret$results
+fitRFcaret$bestTune$mtry
+fitRFcaret$finalModel
+fitRFcaret$finalModel$importance; varImpPlot(fitRFcaret$finalModel)
+```
+
+Results from the predictions on the testing data are below. This model experiences the false negative problem, although the testing error is improved. 
+
+```{r}
+RFcaret_predict=predict(fitRFcaret$finalModel, newdata=testing)
+RFcaret_predict[RFcaret_predict<.5]=0
+RFcaret_predict[RFcaret_predict>.5]=1
+table(testing_targets[,2],RFcaret_predict)
+```
+
+###Model 3
+```{r}
+fitRFcaret2 = train(CARAVAN ~ ., data=training, trControl=cvCtrl,
+                    method="rf", ntree=200)
+
+fitRFcaret2
+plot(fitRFcaret2)
+names(fitRFcaret2)
+fitRFcaret2$results
+fitRFcaret2$bestTune$mtry
+fitRFcaret2$finalModel
+fitRFcaret2$finalModel$importance; varImpPlot(fitRFcaret2$finalModel)
+
+```
+
+Results from the predictions on the testing data are below.
+
+```{r}
+RFcaret_predict2=predict(fitRFcaret2$finalModel, newdata=testing)
+RFcaret_predict2[RFcaret_predict2<.4]=0
+RFcaret_predict2[RFcaret_predict2>.4]=1
+table(testing_targets[,2],RFcaret_predict2)
+
+err=(238)/(3999)
+
+print(paste("test-error=", err))
+```
+
+
+##Boosting
+
+###Model 1
+
+This model uses gbm boosting. 
+
+```{r}
+cvCtrl = trainControl(method="cv", number=10, classProbs = TRUE) ## 10-fold CV
+mygrid = expand.grid(n.trees=seq(200, 2000, 200), interaction.depth=1:8,
+                     shrinkage=0.1, n.minobsinnode=10)
+
+boosting=train(CARAVAN~.,training, method="gbm", metric="ROC", 
+               trControl=cvCtrl,tuneGrid=mygrid, preProc=c('center', 'scale'), verbose=F)
+#saveRDS(fitRFcaret, file="C:/Users/Rachel Sabol/Documents/Graduate Coursework/471 FINAL/boosting.rds")
+
+#path="C:/Users/Rachel Sabol/Documents/Graduate Coursework/471 FINAL/boosting.rds"
+#boosting=readRDS(file = path)
+  
+boosting
+plot(boosting)
+
+```
+
+Results from the predictions on the testing data are below. The testing error is the same as the RFcaret random forest model. 
+
+```{r}
+boosting_predict=predict(boosting,newdata=testing)
+boosting_predict[boosting_predict<.5]=0
+boosting_predict[boosting_predict>.5]=1
+table(testing_targets$CARAVAN,boosting_predict)
+print(postResample(pred=boosting_predict, obs=as.factor(testing_targets$CARAVAN)))
+
+err=238/3999
+print(paste("test-error=", err))
+
+auc <- roc(ifelse(testing_targets$CARAVAN=="yes",1,0), ifelse(boosting_predict=="1",1,0))
+print(auc$auc)
+```
+
+###Model 2
+
+This model uses xgboost to perform boosting. 
+
+```{r}
+xgboost_model = xgboost(data=training_matrix[,1:85], label=training_matrix[,86], max_depth=4, eta=1, nround=5, objective="binary:logistic")
+
+xgb.plot.tree(model=xgboost_model, n_first_tree=1)
+
+```
+
+Results from the predictions on the testing data are below. The testing error of this model is higher, but it does make predictions in the "yes" category. The testing error is improved over the original random forest model (model 1).
+
+```{r}
+xgboost_predict = predict(xgboost_model, testing_matrix)
+xgboost_predict[xgboost_predict<.5]=0
+xgboost_predict[xgboost_predict>.5]=1
+all.equal(xgboost_predict, testing_targets_01$CARAVAN)
+table(testing_targets_01$CARAVAN,xgboost_predict)
+
+err <- mean(as.numeric(xgboost_predict > 0.5) != testing_targets_01$CARAVAN)
+print(paste("test-error=", err))
+```
+
+
+##SVMs
+
+###Model 1
+
+This model uses linear support vector machines for classification. 
+
+```{r}
+svm_model1=svm(CARAVAN~., data=training, kernel='linear')
+svm_model1
+summary(svm_model1)
+
+pred.train=predict(svm_model1, training)
+table(training$CARAVAN,pred.train)
+
+err=348/5821
+print(paste("train-error=", err))
+```
+
+Results from predictions on the testing data are below. The testing error is the same as the training error and the other models. 
+
+```{r}
+pred.test=predict(svm_model1, testing)
+table(testing_targets$CARAVAN,pred.test)
+
+err=238/3999
+print(paste("test-error=", err))
+
+```
+
+Adjustments to the model were made with tuning, with model summaries displayed.
+
+```{r}
+tune.out=tune(svm,CARAVAN~.,data=training,kernel="linear",ranges=list(cost=2^(-5:10)))
+#saveRDS(tune.out, file="C:/Users/Rachel Sabol/Documents/Graduate Coursework/471 FINAL/tuneout.rds")
+
+#path="C:/Users/Rachel Sabol/Documents/Graduate Coursework/471 FINAL/tuneout.rds"
+
+#tune.out=readRDS(file=path)
+
+tune.out$performances
+tune.out$best.model
+table(training$CARAVAN, tune.out$best.model$fitted)
+```
+
+```{r}
+tune_prediction=predict(tune.out$best.model, newdata=testing)
+table(testing_targets$CARAVAN,tune_prediction)
+err=238/3999
+print(paste("test-error=", err))
+
+```
+
+The testing error does not improve with tuning. 
+
+##Model 2
+
+The following model uses polynomial SVM. 
+
+```{r}
+svm_model2 = svm(CARAVAN~., data=training, kernel='polynomial', degree=1, gamma=1, coef0=0)
+svm_model2
+summary(svm_model2)
+
+pred.train=predict(svm_model2, training)
+table(training$CARAVAN,pred.train)
+
+err=348/(5473+348)
+print(paste("train-error=", err))
+```
+
+Results from predictions on the testing data are below. The testing error is not improved from previous models. 
+
+```{r}
+pred.test=predict(svm_model2, testing)
+table(testing_targets$CARAVAN,pred.test)
+
+err=238/3999
+print(paste("test-error=", err))
+```
+
+The following results are from tuning on the polynomial SVM.
+
+```{r}
+svmtune4 = tune(svm, CARAVAN ~ ., data=training, kernel='polynomial', degree=1:3, gamma=1, coef0=1,ranges=list(cost=2^(-5:5)))
+
+#saveRDS(svmtune4, file="C:/Users/Rachel Sabol/Documents/Graduate Coursework/471 FINAL/svmtune4.rds")
+
+#path="C:/Users/Rachel Sabol/Documents/Graduate Coursework/471 FINAL/svmtune4.rds"
+
+#svmtune4=readRDS(file=path)
+
+svmtune4$performances
+svmtune4$best.model
+table(training$CARAVAN, svmtune4$best.model$fitted) ## confusion matrix
+```
+
+The following results are from predictions on the testing data. There is no improvement in the testing error. 
+
+```{r}
+pred.test=predict(svmtune4$best.model, testing)
+table(testing_targets$CARAVAN,pred.test)
+
+err=238/3999
+print(paste("test-error=", err))
+```
+
+The following model uses a radial SVM, with tuning. 
+
+```{r}
+svmfit5 = svm(CARAVAN ~., data=training, kernel='radial')
+
+predsvm5.train=predict(svmfit5, training)
+table(training$CARAVAN,predsvm5.train)
+
+err=331/(5473+331+17)
+print(paste("train-error=", err))
+
+svmtune5 = tune(svm, CARAVAN ~., data=training, kernel='radial', ranges=list(cost=2^(-5:5), gamma=2^(-5:0)))
+
+#saveRDS(svmtune5, file="C:/Users/Rachel Sabol/Documents/Graduate Coursework/471 FINAL/svmtune5.rds")
+#path="C:/Users/Rachel Sabol/Documents/Graduate Coursework/471 FINAL/svmtune5.rds"
+
+#svmtune5=readRDS(file=path)
+
+svmtune5$best.model
+table(training$CARAVAN, svmtune5$best.model$fitted)
+err=348/(348+5473)
+print(paste("tune-error=", err))
+      
+      
+```
+
+Both the tuned and untuned models do not make improvements to the testing error. 
+
+```{r}
+predsvm5.test=predict(svmfit5, testing)
+table(testing_targets$CARAVAN,predsvm5.test)
+
+predsvm5.tunetest=predict(svmtune5$best.model, testing)
+table(testing_targets$CARAVAN, predsvm5.tunetest)
+
+err=238/(3999)
+print(paste("test-error=", err))
+
+err=238/3999
+print(paste("tuned test-error=", err))
+
+```
+
+
+#UNSUPERVISED LEARNING
+
+##K-means clustering
+
+The following model uses K-means clustering. Scaling leads to significantly different results. 
+
+```{r}
+#data usage for unsupervised
+training_u=training[,6:41]
+testing_u=testing[,6:41]
+
+training_u2=scale(training_u)
+testing_u2=scale(testing_u)
+
+training_u3=training[, 1:2]
+training_u4=scale(training_u3)
+```
+
+Representitive plots are displayed below, using the first two variables in the training data for both scaled and unscaled data. 
+
+```{r}
+kclust=kmeans(training_u,3,nstart=10)
+str(kclust)
+kclust2=kmeans(training_u2,3,nstart = 10)
+str(kclust2)
+
+#for illustration
+
+
+kclust3=kmeans(training_u3,3,nstart = 5)
+kclust4=kmeans(training_u4,3,nstart = 5)
+plot(training_u3, col=kclust3$cluster); points(kclust3$centers, pch=19)
+plot(training_u4, col=kclust4$cluster); points(kclust4$centers, pch=19)
+```
+
+#Hierarchical Clustering
+
+The following plots display hierarchical clustering on the scaled data. 
+
+```{r}
+#using the scaled data...
+
+dist1=dist(training_u2)
+str(dist1)
+
+cluster1=cutree(hclust(dist1), 5)
+cluster2=cutree(hclust(dist1), 5.7)
+
+table(cluster1); table(cluster2)
+table(cluster1, cluster2)
+
+plot(hclust(dist1, method='complete'), labels=F, xlab='',main="Complete")
+plot(hclust(dist1, method='average'), labels=F, xlab='',main="Average")
+plot(hclust(dist1, method='single'), labels=F, xlab='',main="Single")
+
+```
+
+The following plots display hierarchical clustering on the unscaled data. 
+
+```{r}
+dist2=as.dist(1-cor(t(training_u2)))
+
+plot(hclust(dist2, method='complete'), labels=F, xlab='',main="Complete")
+plot(hclust(dist2, method='average'), labels=F, xlab='',main="Average")
+plot(hclust(dist2, method='single'), labels=F, xlab='',main="Single")
+
+```
+
+```{r}
+hclust1=cutree(hclust(dist(training_u3)), 5)
+hclust2=cutree(hclust(dist(training_u4)), 5)
+
+plot(training_u3,col=hclust1); plot(training_u4, col=hclust2)
+
+```
+
+##MDS Plots
+
+MDS plots were generated using cmdscale. Plots are displayed for both scaled and unscaled data.
+
+```{r}
+#scaled
+labels=training$CARAVAN
+dim(training_u2)
+
+data.dist1 = dist(training_u2)
+
+cmds2a = cmdscale(data.dist1, k=2, add=T, list.=T)
+apply(cmds2a$points, 2, mean) ## zero mean (not exactly due to rounding errors)
+aa2a = data.frame(cmds2a$points)
+ggplot(aa2a, aes(X1, X2)) +
+geom_point(aes(colour=labels), size=6) +
+labs(color="Caravan\n") +
+scale_color_manual(labels=labels, values=rainbow(10)[1:9]) +
+geom_text(aes(label=substr(labels, 1, 1)), hjust=0, size=3)
+
+
+data.dist2 = dist(training_u)
+
+## unscaled
+cmds2b = cmdscale(data.dist2, k=2, add=T, list.=T)
+aa2b = data.frame(cmds2b$points)
+ggplot(aa2b, aes(X1, X2)) +
+geom_point(aes(colour=labels), size=6) +
+labs(color="Caravan\n") +
+scale_color_manual(labels=labels, values=rainbow(10)[1:9]) +
+geom_text(aes(label=substr(labels, 1, 1)), hjust=0, size=3)
+
+
+```
+
+
+
+
+
+
